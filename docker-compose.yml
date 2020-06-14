@@ -1,0 +1,97 @@
+version: '3'
+
+services:
+  db:
+    image: postgres:alpine
+    restart: unless-stopped
+    container_name: postgres
+    volumes:
+      - /srv/data/nextcloud/postgresql/data:/var/lib/postgresql/data
+    env_file:
+      - db.env
+
+  # Redis server for memory caching for Nextcloud
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    command: redis-server --requirepass CuStOmPaSsWoRd
+    container_name: redis
+    ports: 6379:6379
+    networks:
+      - nextcloud_net
+    volumes:
+      - /srv/data/redis/data:/var/lib/redis
+      - /srv/data/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    env_file: redis.env
+
+  app:
+    image: nextcloud:fpm-alpine
+    container_name: nextcloud
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - letsencrypt
+      - proxy
+    volumes:
+      - /srv/data/nextcloud/www/html:/var/www/html
+      - /srv/data/nextcloud/www/html/apps:/var/www/html/custom_apps
+      - /srv/data/nextcloud/www/html/config:/var/www/html/config
+      - /srv/data/nextcloud/www/html/data:/var/www/html/data
+      - /srv/data/nextcloud/www/html/themes:/var/www/html/themes
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - nextcloud.env
+      - redis.env
+      - db.env
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    volumes:
+      - /srv/data/nextcloud/www/html:/var/www/html:ro
+    depends_on:
+      - app
+    networks:
+      - nextcloud_net
+      - default
+    env_file: web.env
+
+  proxy:
+    build: ./proxy
+    restart: unless-stopped
+    container_name: nextcloud-proxy
+    ports:
+      - 80:80
+      - 443:443
+    labels:
+      com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy: "true"
+    volumes:
+      - /srv/data/nginx/conf.d:/etc/nginx/conf.d:rw
+      - /srv/data/nginx/vhost.d:/etc/nginx/vhost.d:rw
+      - /srv/data/nginx/html:/usr/share/nginx/html:rw
+      - /srv/data/nginx/certs:/etc/nginx/certs:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    networks:
+      - nextcloud_net
+    env_file: web.env
+
+  letsencrypt:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    container_name: nextcloud-letsencrypt
+    depends_on:
+      - proxy
+    networks:
+      - nextcloud_net
+    volumes:
+      - /srv/data/nginx/certs:/etc/nginx/certs:rw
+      - /srv/data/nginx/vhost.d:/etc/nginx/vhost.d:rw
+      - /srv/data/nginx/html:/usr/share/nginx/html:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    env_file: web.env
+
+networks:
+  nextcloud_net:
